@@ -1,0 +1,157 @@
+#include <SoftwareSerial.h>
+
+// --- Configuration ---
+// HC-05 Bluetooth Module Connections
+// TX (Data to HC-05) -> Arduino Pin A4 (Connected to HC-05 RX)
+// RX (Data from HC-05) -> Arduino Pin A3 (Connected to HC-05 TX)
+SoftwareSerial BT(A3, A4); 
+
+// Motor Driver Pin Definitions 
+// Motor A (Physically LEFT Wheel) - ENA, IN1, IN2
+// *WARNING: Pins 1 and 2 conflict with the USB Serial port*
+const int ENA = 3;   // PWM Speed Control Pin 
+const int IN1 = 1;   // Direction Pin 1 
+const int IN2 = 2;   // Direction Pin 2 
+
+// Motor B (Physically RIGHT Wheel) - ENB, IN3, IN4
+const int ENB = 11;  // PWM Speed Control Pin
+const int IN3 = 12;  // Direction Pin 1
+const int IN4 = 13;  // Direction Pin 2
+
+// State variable for speed (0 to 255).
+int current_speed = 200; 
+
+// --- End Configuration ---
+
+void setup() {
+  // Initialize communication
+  BT.begin(9600);    // HC-05 default baud rate
+  // Serial.begin(9600); // Must be commented out due to IN1/IN2 pin conflict
+
+  // Motor Pin Setup
+  pinMode(ENA, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+
+  pinMode(ENB, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+
+  stopCar(); // Ensure the car is stopped at start
+}
+
+void loop() {
+  // Check if any data is available from the Bluetooth module
+  if (BT.available()) {
+    char cmd = BT.read();
+
+    // Execute the corresponding action
+    switch(cmd) {
+      case 'F': forward(); break;    // Go Forward
+      case 'B': backward(); break;   // Go Backward
+      case 'L': left(); break;       // Pivot Left (Corrected for wiring)
+      case 'R': right(); break;      // Pivot Right (Corrected for wiring)
+      case 'S': stopCar(); break;    // Stop
+      case 'V': speed_control(); break; // Update Speed from App Slider
+      default: 
+        break; // Ignore unknown commands
+    }
+  }
+}
+
+// ===================================
+// -------- Motor Control Helper Functions --------
+// NOTE: These functions control the physical motors based on your previous observations.
+// Motor A is physically the Left Wheel (INA, IN2, ENA)
+// Motor B is physically the Right Wheel (IN3, IN4, ENB)
+// ===================================
+
+// Set Motor A (Physically Left Wheel) to move Forward
+void rightMotorForward(int speed) {
+  analogWrite(ENA, speed);
+  digitalWrite(IN1, HIGH); 
+  digitalWrite(IN2, LOW);
+}
+
+// Set Motor A (Physically Left Wheel) to move Backward
+void rightMotorBackward(int speed) {
+  analogWrite(ENA, speed);
+  digitalWrite(IN1, LOW); 
+  digitalWrite(IN2, HIGH);
+}
+
+// Set Motor A (Physically Left Wheel) to stop
+void rightMotorStop() {
+  analogWrite(ENA, 0); 
+}
+
+// Set Motor B (Physically Right Wheel) to move Forward
+void leftMotorForward(int speed) {
+  analogWrite(ENB, speed);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+}
+
+// Set Motor B (Physically Right Wheel) to move Backward
+void leftMotorBackward(int speed) {
+  analogWrite(ENB, speed);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+}
+
+// Set Motor B (Physically Right Wheel) to stop
+void leftMotorStop() {
+  analogWrite(ENB, 0);
+}
+
+
+// -------- Car Movement Functions --------
+
+// Moves the car straight forward using the current_speed setting
+void forward() {
+  rightMotorForward(current_speed); // Left Wheel Forward
+  leftMotorForward(current_speed);  // Right Wheel Forward
+}
+
+// Moves the car straight backward using the current_speed setting
+void backward() {
+  rightMotorBackward(current_speed); // Left Wheel Backward
+  leftMotorBackward(current_speed);  // Right Wheel Backward
+}
+
+// Pivot Turn Left (Corrected Logic)
+void left() {
+  // To turn LEFT: Right wheel Forward, Left wheel Backward
+  leftMotorForward(current_speed);    // Motor B (Physical Right Wheel) FORWARD
+  rightMotorBackward(current_speed);  // Motor A (Physical Left Wheel) BACKWARD
+}
+
+// Pivot Turn Right (Corrected Logic)
+void right() {
+  // To turn RIGHT: Left wheel Forward, Right wheel Backward
+  leftMotorBackward(current_speed);   // Motor B (Physical Right Wheel) BACKWARD
+  rightMotorForward(current_speed);   // Motor A (Physical Left Wheel) FORWARD
+}
+
+// Stops both motors
+void stopCar() {
+  rightMotorStop();
+  leftMotorStop();
+}
+
+// Reads the speed value sent from the app's slider (usually a number 0-255)
+void speed_control() {
+  // Wait a very small amount of time to ensure the next byte arrives after 'V'
+  unsigned long timeout = millis() + 5; 
+  while (!BT.available() && millis() < timeout);
+  
+  if (BT.available()) {
+    // Read the incoming byte (which is the speed value 0-255)
+    int received_speed = BT.read(); 
+    
+    // Update speed if valid
+    if (received_speed >= 0 && received_speed <= 255) {
+      current_speed = received_speed;
+    }
+  }
+}

@@ -1,0 +1,181 @@
+#include <LiquidCrystal.h>
+
+// ===================== IR SENSOR PINS =====================
+#define LEFT_SENSOR_DIGITAL A1
+#define RIGHT_SENSOR_DIGITAL A2
+
+// ===================== MOTOR PINS =========================
+#define motor1A 1
+#define motor1B 2
+#define motor2A 12
+#define motor2B 13
+
+const int ENA = 3;   // Left motor PWM
+const int IN1 = 1;   // Left motor direction 1
+const int IN2 = 2;   // Left motor direction 2
+const int ENB = 11;  // Right motor PWM
+const int IN3 = 12;  // Right motor direction 1
+const int IN4 = 13;  // Right motor direction 2
+
+// --- Encoder pins (polling on A3/A4) ---
+const int leftEncoderPin = A3;
+const int rightEncoderPin = A4;
+
+// --- Variables ---
+long leftTicks = 0;
+long rightTicks = 0;
+int lastLeftState = LOW;
+int lastRightState = LOW;
+
+// --- Wheel constants ---
+const float wheelDiameter_mm = 65.0;   // measure your wheel
+const int countsPerRev = 20;           // slots on encoder disk
+const float wheelCircumference_mm = PI * wheelDiameter_mm;
+
+// ===================== LCD PINS ========================
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
+unsigned long currentTime = 0;
+unsigned long previousTime = 0;
+unsigned long lastUpdate = 0;
+
+void setup() {
+  lcd.begin(16, 2);
+  lcd.print("Robot Car Ready");
+  delay(1500);
+  lcd.clear();
+
+  // Motor setup
+  pinMode(ENA, OUTPUT);
+  pinMode(ENB, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+
+  // Sensor setup
+  pinMode(LEFT_SENSOR_DIGITAL, INPUT);
+  pinMode(RIGHT_SENSOR_DIGITAL, INPUT);
+  
+  // Encoder setup
+  pinMode(leftEncoderPin, INPUT);
+  pinMode(rightEncoderPin, INPUT);
+
+  previousTime = millis();
+}
+
+// ===================== MAIN LOOP ============================
+void loop() {
+  currentTime = millis() - previousTime;
+
+  // --- Poll encoders ---
+  int leftState = digitalRead(leftEncoderPin);
+  int rightState = digitalRead(rightEncoderPin);
+
+  if (leftState == HIGH && lastLeftState == LOW) {
+    leftTicks++;
+  }
+  if (rightState == HIGH && lastRightState == LOW) {
+    rightTicks++;
+  }
+
+  lastLeftState = leftState;
+  lastRightState = rightState;
+
+  // Calculate rounds and distance
+  float roundsLeft = (float)leftTicks / countsPerRev;
+  float roundsRight = (float)rightTicks / countsPerRev;
+
+  float distLeft_mm = roundsLeft * wheelCircumference_mm;
+  float distRight_mm = roundsRight * wheelCircumference_mm;
+  float distAvg_mm = (distLeft_mm + distRight_mm) / 2.0;
+
+  // ---- Read IR Sensors ----
+  int leftDigital = digitalRead(LEFT_SENSOR_DIGITAL);
+  int rightDigital = digitalRead(RIGHT_SENSOR_DIGITAL);
+
+  // ---- LCD Display (sensors + time) ----
+  lcd.setCursor(0, 0);
+  lcd.print("L:");
+  lcd.print(leftDigital);
+  lcd.print(" R:");
+  lcd.print(rightDigital);
+  lcd.print("   ");
+
+  lcd.setCursor(0, 1);
+  lcd.print("Time:");
+  lcd.print(currentTime / 1000);
+  lcd.print("s   ");
+
+  // ---- LCD Display (distance every 500 ms) ----
+  if (millis() - lastUpdate > 500) {
+    lcd.setCursor(0, 0);
+    lcd.print("Dist:");
+    lcd.print(distAvg_mm / 10.0); // meters
+    lcd.print(" dist(cm)   ");
+
+    lcd.setCursor(0, 1);
+    lcd.print("L:");
+    lcd.print(distLeft_mm / 10.0);
+    lcd.print(" R:");
+    lcd.print(distRight_mm / 10.0);
+
+    lastUpdate = millis();
+  }
+
+  // ===================== LINE FOLLOWING ======================
+  if (leftDigital == 1 && rightDigital == 0) {
+    moveForward();
+  }
+  else if (leftDigital == 1 && rightDigital == 1) {
+    turnRight();
+  }
+  else if (leftDigital == 0 && rightDigital == 1) {
+    turnLeft();
+  }
+  else if (leftDigital == 0 && rightDigital == 0) {
+    stopCar();
+    lcd.setCursor(0, 0);
+    lcd.print("End of track   ");
+  }
+
+  delay(20); // small delay for stability
+}
+
+// ===================== MOTOR FUNCTIONS =====================
+void moveForward() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+
+  analogWrite(ENA, 190);
+  analogWrite(ENB, 140);
+}
+
+void turnLeft() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 180);
+}
+
+void turnRight() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+
+  analogWrite(ENA, 200);
+  analogWrite(ENB, 50);
+}
+
+void stopCar() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+}

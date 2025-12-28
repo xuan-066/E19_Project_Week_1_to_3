@@ -1,0 +1,224 @@
+#include <LiquidCrystal.h>
+
+// ===================== IR SENSOR PINS =====================
+#define LEFT_SENSOR_DIGITAL A1
+#define RIGHT_SENSOR_DIGITAL A2
+
+// ===================== MOTOR PINS =========================
+const int ENA = 3;
+const int IN1 = 1;
+const int IN2 = 2;
+
+const int ENB = 11;
+const int IN3 = 12;
+const int IN4 = 13;
+
+// ===================== ENCODER PINS =======================
+const int leftEncoderPin = A3;
+const int rightEncoderPin = A4;
+
+// ===================== ENCODER VARIABLES ==================
+volatile long leftTicks = 0;
+volatile long rightTicks = 0;
+
+int lastLeftState = LOW;
+int lastRightState = LOW;
+
+// ===================== WHEEL CONSTANTS ====================
+const float wheelDiameter_mm = 63.0;
+const int countsPerRev = 20;
+const float wheelCircumference_mm = PI * wheelDiameter_mm;
+
+// ===================== LCD ===============================
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
+// ===================== TIMER VARIABLES =====================
+unsigned long runStartTime = 0;
+unsigned long lastLCDUpdate = 0;
+
+// ================ STOP AT 190 CM VARIABLES =================
+const float TARGET_DISTANCE_CM = 190.0;
+bool stopTriggered = false;
+bool hasStoppedOnce = false;
+unsigned long stopStartTime = 0;
+const unsigned long STOP_DURATION = 2000;
+
+// ================ END OF TRACK VARIABLES ===================
+bool endOfTrack = false;
+unsigned long horizontalLineStart = 0;
+
+void setup() {
+  lcd.begin(16, 2);
+  lcd.print("Robot Car Ready");
+  delay(1500);
+  lcd.clear();
+
+  pinMode(ENA, OUTPUT);
+  pinMode(ENB, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+
+  pinMode(LEFT_SENSOR_DIGITAL, INPUT);
+  pinMode(RIGHT_SENSOR_DIGITAL, INPUT);
+
+  pinMode(leftEncoderPin, INPUT);
+  pinMode(rightEncoderPin, INPUT);
+
+  runStartTime = millis();
+}
+
+void loop() {
+  unsigned long currentMillis = millis();
+
+  // =================== READ ENCODERS ====================
+  int leftState = digitalRead(leftEncoderPin);
+  int rightState = digitalRead(rightEncoderPin);
+
+  if (leftState == HIGH && lastLeftState == LOW) leftTicks++;
+  if (rightState == HIGH && lastRightState == LOW) rightTicks++;
+
+  lastLeftState = leftState;
+  lastRightState = rightState;
+
+  float distLeft_mm  = (leftTicks * wheelCircumference_mm) / countsPerRev;
+  float distRight_mm = (rightTicks * wheelCircumference_mm) / countsPerRev;
+  float distAvg_cm   = ((distLeft_mm + distRight_mm) / 2.0) / 10.0;
+
+  // =================== READ IR SENSORS ====================
+  int leftDigital = digitalRead(LEFT_SENSOR_DIGITAL);
+  int rightDigital = digitalRead(RIGHT_SENSOR_DIGITAL);
+
+  // =====================================================
+  //   END OF TRACK (BOTH SENSORS BLACK FOR 250ms)
+  // =====================================================
+  if (!endOfTrack) {
+    if (leftDigital == 0 && rightDigital == 0) {
+
+      if (horizontalLineStart == 0) {
+        horizontalLineStart = currentMillis;
+      }
+
+      if (currentMillis - horizontalLineStart >= 250) {
+        endOfTrack = true;
+        stopCar();
+
+        float finalDistance = distAvg_cm;
+        unsigned long totalTime = (currentMillis - runStartTime) / 1000;
+
+        lcd.clear();
+        lcd.setCursor(0, 0);
+        lcd.print("END OF TRACK!");
+
+        lcd.setCursor(0, 1);
+        lcd.print(finalDistance, 1);
+        lcd.print("cm ");
+        lcd.print(totalTime);
+        lcd.print("s");
+
+        return; // FREEZE robot safely
+      }
+    }
+    else {
+      horizontalLineStart = 0; // reset timer
+    }
+  }
+  else {
+    return; // already reached end
+  }
+
+  // =====================================================
+  //   STOP AT 190CM FOR 2 SECONDS (ONLY ONCE)
+  // =====================================================
+  if (!hasStoppedOnce && !stopTriggered && distAvg_cm >= TARGET_DISTANCE_CM) {
+    stopCar();
+    stopTriggered = true;
+    stopStartTime = currentMillis;
+
+    lcd.clear();
+    lcd.setCursor(0, 0);
+    lcd.print("Stopping 2 sec");
+  }
+
+  if (stopTriggered) {
+    if (currentMillis - stopStartTime < STOP_DURATION) {
+      stopCar();
+      return;
+    } else {
+      stopTriggered = false;
+      hasStoppedOnce = true;
+      lcd.clear();
+    }
+  }
+
+  // =====================================================
+  //   LINE FOLLOWING (NORMAL)
+  // =====================================================
+  if (leftDigital == 1 && rightDigital == 0) {
+    moveForward();
+  }
+  else if (leftDigital == 1 && rightDigital == 1) {
+    turnRight();
+  }
+  else if (leftDigital == 0 && rightDigital == 1) {
+    turnLeft();
+  }
+  else if (leftDigital == 0 && rightDigital == 0) {
+    // This will be handled by END-OF-TRACK above
+    stopCar();
+  }
+
+  // ===================== UPDATE LCD ======================
+  if (currentMillis - lastLCDUpdate > 500) {
+    lcd.setCursor(0, 0);
+    lcd.print("Dist:");
+    lcd.print(distAvg_cm);
+    lcd.print("cm   ");
+
+    lcd.setCursor(0, 1);
+    lcd.print("L:");
+    lcd.print(distLeft_mm / 10.0);
+    lcd.print(" R:");
+    lcd.print(distRight_mm / 10.0);
+
+    lastLCDUpdate = currentMillis;
+  }
+}
+
+// ===================== MOTOR FUNCTIONS =====================
+void moveForward() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+  analogWrite(ENA, 190);
+  analogWrite(ENB, 140);
+}
+
+void turnLeft() {
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 180);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+}
+
+void turnRight() {
+  analogWrite(ENA, 200);
+  analogWrite(ENB, 50);
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+}
+
+void stopCar() {
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+}

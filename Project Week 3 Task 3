@@ -1,0 +1,162 @@
+#include <LiquidCrystal.h>
+
+// ===================== ULTRASONIC SENSOR PINS =============
+// HC-SR04 uses A3 (Trig) and A4 (Echo).
+const int trigPin = A3; 
+const int echoPin = A4;
+
+// ===================== MOTOR PINS =========================
+const int ENA = 3;    
+const int IN1 = 1;    
+const int IN2 = 2;    
+const int ENB = 11;   
+const int IN3 = 12;   
+const int IN4 = 13;   
+
+// *CONTROL CONSTANTS*
+const int DRIVE_SPEED = 120; // Driving speed for open path (PWM 0-255) <-- SLOWED DOWN
+const int SLOW_SPEED = 100;  // Speed for reversing/turning (PWM 0-255) <-- SLOWED DOWN
+
+// *OBSTACLE AVOIDANCE CONSTANTS*
+const int OBSTACLE_DISTANCE_CM = 20; // Distance threshold to detect an obstacle
+const int REVERSE_TIME_MS = 600;     // Time to reverse (0.6 seconds)
+const int TURN_TIME_MS = 1000;       // Time to turn (1.0 second for direction change)
+
+// ===================== LCD PINS ========================
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
+// Timing
+unsigned long lastLCDUpdate = 0;
+
+// ===================== MOTOR FUNCTIONS =====================
+
+void driveForward() {
+  digitalWrite(IN1, HIGH);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);
+  analogWrite(ENA, DRIVE_SPEED);
+  analogWrite(ENB, DRIVE_SPEED);
+}
+
+void reverse() {
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, HIGH);
+  analogWrite(ENA, SLOW_SPEED);
+  analogWrite(ENB, SLOW_SPEED);
+}
+
+void turnInPlace() {
+  // Pivot left: Left Reverse, Right Forward
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, HIGH);  // Left Wheel Reverse
+  digitalWrite(IN3, HIGH);
+  digitalWrite(IN4, LOW);   // Right Wheel Forward
+  analogWrite(ENA, SLOW_SPEED);
+  analogWrite(ENB, SLOW_SPEED);
+}
+
+void stopCar() {
+  analogWrite(ENA, 0);
+  analogWrite(ENB, 0);
+  digitalWrite(IN1, LOW);
+  digitalWrite(IN2, LOW);
+  digitalWrite(IN3, LOW);
+  digitalWrite(IN4, LOW);
+}
+
+// ===================== ULTRASONIC FUNCTION =================
+long readDistanceCM() {
+  // Clears the trigPin condition
+  digitalWrite(trigPin, LOW);
+  delayMicroseconds(2);
+
+  // Sets the trigPin HIGH for 10 microseconds
+  digitalWrite(trigPin, HIGH);
+  delayMicroseconds(10);
+  digitalWrite(trigPin, LOW);
+
+  // Reads the echoPin, returns the sound wave travel time in microseconds
+  long duration = pulseIn(echoPin, HIGH);
+
+  // Calculate the distance
+  long distance = duration * 0.034 / 2;
+  
+  // Return distance, capped for reliability
+  if (distance == 0 || distance > 400) return 400; 
+  return distance;
+}
+
+// ===================== SETUP =============================
+
+void setup() {
+  lcd.begin(16, 2);
+  lcd.print("Obstacle Mode");
+  delay(1000);
+  lcd.clear();
+
+  // Motor setup
+  pinMode(ENA, OUTPUT);
+  pinMode(ENB, OUTPUT);
+  pinMode(IN1, OUTPUT);
+  pinMode(IN2, OUTPUT);
+  pinMode(IN3, OUTPUT);
+  pinMode(IN4, OUTPUT);
+
+  // HC-SR04 Setup
+  pinMode(trigPin, OUTPUT);
+  pinMode(echoPin, INPUT);
+}
+
+// ===================== LOOP ==============================
+
+void loop() {
+  unsigned long currentMillis = millis();
+  
+  // --------------------------------------------------------
+  // 1. OBSTACLE CHECK
+  // --------------------------------------------------------
+  long distance = readDistanceCM();
+
+  if (distance < OBSTACLE_DISTANCE_CM) {
+    // ------------------------------------------------------
+    // OBSTACLE DETECTED: EVASION ROUTINE
+    // ------------------------------------------------------
+    stopCar();
+    delay(100); 
+
+    // 1. Reverse
+    reverse();
+    delay(REVERSE_TIME_MS); 
+    
+    // 2. Turn in place
+    turnInPlace();
+    delay(TURN_TIME_MS); 
+
+  } else {
+    // ------------------------------------------------------
+    // PATH CLEAR: DRIVE FORWARD
+    // ------------------------------------------------------
+    driveForward();
+  }
+
+
+  // --------------------------------------------------------
+  // 2. LCD UPDATE
+  // --------------------------------------------------------
+
+  // Update LCD every 500 ms
+  if (currentMillis - lastLCDUpdate > 500) {
+    lcd.setCursor(0, 0);
+    lcd.print("Mode: Avoiding  ");
+    
+    lcd.setCursor(0, 1);
+    lcd.print("Distance:");
+    lcd.print(distance);
+    lcd.print(" cm "); 
+    
+    lastLCDUpdate = currentMillis;
+  }
+}

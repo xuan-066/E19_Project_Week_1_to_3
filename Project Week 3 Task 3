@@ -1,0 +1,163 @@
+#include <Arduino.h>
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <Adafruit_Sensor.h>
+#include <LiquidCrystal.h>
+
+// ==== Disable UART so PIN 1 behaves normally ====
+void disableSerialInterrupts() {
+  UCSR0B = 0;  // FULLY disable Serial hardware
+}
+
+// ====== LCD ======
+LiquidCrystal lcd(8, 9, 4, 5, 6, 7);
+
+// ====== MPU6050 ======
+Adafruit_MPU6050 mpu;
+
+// Pitch calibration
+const float PITCH_CALIBRATION_OFFSET = 1.7;
+
+// ====== Motor Pins ======
+const int ENA = 3;
+const int IN1 = 1;
+const int IN2 = 2;
+const int ENB = 11;
+const int IN3 = 12;
+const int IN4 = 13;
+
+const int BASE_SPEED = 220;
+
+// ====== Timing ======
+const unsigned long MOVE_DURATION     = 2000;
+const unsigned long STOP_DURATION     = 4000;
+const unsigned long ROTATE_DURATION   = 2300;
+const unsigned long FINAL_FORWARD     = 1000;
+
+unsigned long stateStartTime = 0;
+int state = 0;
+
+// ====== Maximum angle storage ======
+float maxAngle = -999;
+
+// ===== MOTOR FUNCTIONS =====
+void leftMotorForward(int s){ analogWrite(ENA,s); digitalWrite(IN1,HIGH); digitalWrite(IN2,LOW); }
+void leftMotorBackward(int s){ analogWrite(ENA,s); digitalWrite(IN1,LOW); digitalWrite(IN2,HIGH); }
+void rightMotorForward(int s){ analogWrite(ENB,s); digitalWrite(IN3,HIGH); digitalWrite(IN4,LOW); }
+void rightMotorBackward(int s){ analogWrite(ENB,s); digitalWrite(IN3,LOW); digitalWrite(IN4,HIGH); }
+
+void moveForward(int s){ leftMotorForward(s); rightMotorForward(s); }
+void rotate360(int s){ leftMotorBackward(s); rightMotorForward(s); }
+
+void stopCar(){
+  analogWrite(ENA,0);
+  analogWrite(ENB,0);
+  digitalWrite(IN1,LOW); digitalWrite(IN2,LOW);
+  digitalWrite(IN3,LOW); digitalWrite(IN4,LOW);
+}
+
+void setup() {
+  disableSerialInterrupts();  // so pin 1 works normally
+
+  lcd.begin(16, 2);
+  lcd.print("Init MPU...");
+
+  // Init MPU
+  Wire.begin();
+  if (!mpu.begin()) {
+    lcd.clear(); lcd.print("MPU ERROR");
+    while (1);
+  }
+
+  lcd.clear();
+  lcd.print("Running...");
+
+  // Init motors
+  pinMode(ENA,OUTPUT); pinMode(ENB,OUTPUT);
+  pinMode(IN1,OUTPUT); pinMode(IN2,OUTPUT);
+  pinMode(IN3,OUTPUT); pinMode(IN4,OUTPUT);
+
+  moveForward(BASE_SPEED);
+  stateStartTime = millis();
+}
+
+void loop() {
+
+  // ========= READ MPU ANGLE =========
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a,&g,&temp);
+
+  // 1. RAW Angle Calculation
+  float raw_pitch = atan2(
+    -a.acceleration.y,
+    sqrt(a.acceleration.x*a.acceleration.x + a.acceleration.z*a.acceleration.z)
+  ) * 180.0 / PI;
+
+  // 2. APPLY CALIBRATION OFFSET
+  float pitch = raw_pitch - PITCH_CALIBRATION_OFFSET;
+
+  // 3. FILTERED PITCH (low-pass)S
+  const float alpha = 0.1; // smoothing factor
+  static float pitch_filtered = 0;
+  pitch_filtered = alpha * pitch + (1-alpha) * pitch_filtered;
+
+  // 4. TRACK MAX ANGLE WHILE MOVING
+  if(state < 4 && pitch_filtered > maxAngle){
+    maxAngle = pitch_filtered;
+  }
+
+  // 5. DISPLAY PITCH
+  if(state != 4){
+    lcd.setCursor(0,0);
+    lcd.print("Pitch:");
+    lcd.print(pitch_filtered,1);
+    lcd.print("    "); // clear extra chars
+  }
+
+  // ========= STATE MACHINE =========
+  unsigned long now = millis();
+
+  switch(state){
+
+    case 0: // Move forward
+      if(now - stateStartTime >= MOVE_DURATION){
+        stopCar();
+        state = 1;
+        stateStartTime = now;
+      }
+      break;
+
+    case 1: // Stop 4 sec
+      if(now - stateStartTime >= STOP_DURATION){
+        rotate360(BASE_SPEED);
+        state = 2;
+        stateStartTime = now;
+      }
+      break;
+
+    case 2: // Rotate
+      if(now - stateStartTime >= ROTATE_DURATION){
+        moveForward(BASE_SPEED);
+        state = 3;
+        stateStartTime = now;
+      }
+      break;
+
+    case 3: // Final forward 1 sec
+      if(now - stateStartTime >= FINAL_FORWARD){
+        stopCar();
+        state = 4;
+        lcd.clear();
+        lcd.setCursor(0,0);
+        lcd.print("MAX ANGLE:");
+        lcd.setCursor(0,1);
+        lcd.print(maxAngle,1);
+        lcd.print(" deg     ");
+      }
+      break;
+
+    case 4: // Finished
+      stopCar();
+      break;
+  }
+}
